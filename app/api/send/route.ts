@@ -1,32 +1,47 @@
 import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 
+const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB
+
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const formData = await request.formData();
 
-    const senderEmail = body.senderEmail?.trim();
-    const senderPassword = body.senderPassword?.trim();
-    const recipients = body.recipients;
-    const subject = body.subject?.trim();
-    const emailBody = body.emailBody?.trim();
+    const senderEmail = String(formData.get("senderEmail") || "").trim();
+    const senderPassword = String(
+      formData.get("senderPassword") || ""
+    ).trim();
+
+    const subject = String(formData.get("subject") || "").trim();
+    const emailBody = String(formData.get("emailBody") || "").trim();
+
+    const recipientsRaw = String(
+      formData.get("recipients") || ""
+    ).trim();
+
+    const attachment = formData.get("attachment");
 
     if (
       !senderEmail ||
       !senderPassword ||
-      !recipients ||
       !subject ||
-      !emailBody
+      !emailBody ||
+      !recipientsRaw
     ) {
       return NextResponse.json(
         {
-          error: "All email fields are required.",
+          error: "Sender, recipients, subject and email body are required.",
         },
         { status: 400 }
       );
     }
 
-    if (!Array.isArray(recipients) || recipients.length === 0) {
+    const recipients = recipientsRaw
+      .split(/[,\n;]/)
+      .map((email) => email.trim())
+      .filter(Boolean);
+
+    if (recipients.length === 0) {
       return NextResponse.json(
         {
           error: "At least one recipient is required.",
@@ -35,7 +50,68 @@ export async function POST(request: Request) {
       );
     }
 
-    // Gmail SMTP connection
+    let attachmentData:
+      | {
+          filename: string;
+          content: Buffer;
+          contentType?: string;
+        }
+      | undefined;
+
+    // Process CV attachment if one was selected
+    if (attachment instanceof File) {
+      if (attachment.size > MAX_FILE_SIZE) {
+        return NextResponse.json(
+          {
+            error: "CV file is too large. Maximum allowed size is 4 MB.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (attachment.size === 0) {
+        return NextResponse.json(
+          {
+            error: "The selected CV file is empty.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const allowedTypes = [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ];
+
+      const allowedExtensions = [".pdf", ".doc", ".docx"];
+
+      const filename = attachment.name.toLowerCase();
+
+      const hasValidExtension = allowedExtensions.some((extension) =>
+        filename.endsWith(extension)
+      );
+
+      const hasValidMimeType = allowedTypes.includes(attachment.type);
+
+      if (!hasValidExtension || !hasValidMimeType) {
+        return NextResponse.json(
+          {
+            error: "Please upload a PDF, DOC, or DOCX file.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const buffer = Buffer.from(await attachment.arrayBuffer());
+
+      attachmentData = {
+        filename: attachment.name,
+        content: buffer,
+        contentType: attachment.type,
+      };
+    }
+
     const transporter = nodemailer.createTransport({
       host: "smtp.gmail.com",
       port: 587,
@@ -46,22 +122,28 @@ export async function POST(request: Request) {
       },
     });
 
-    // Verify credentials before attempting to send
     await transporter.verify();
 
-    const formattedHtml = convertTextToHtml(emailBody);
-
-    await transporter.sendMail({
+    const mailOptions: nodemailer.SendMailOptions = {
       from: senderEmail,
       to: recipients,
       subject,
       text: emailBody,
-      html: formattedHtml,
-    });
+      html: convertTextToHtml(emailBody),
+    };
+
+    if (attachmentData) {
+      mailOptions.attachments = [attachmentData];
+    }
+
+    await transporter.sendMail(mailOptions);
 
     return NextResponse.json({
       success: true,
-      message: "Email sent successfully.",
+      message: attachmentData
+        ? "Email sent successfully with attachment."
+        : "Email sent successfully.",
+      attachment: attachmentData?.filename || null,
     });
   } catch (error: any) {
     console.error("Send email error:", error);
@@ -70,9 +152,11 @@ export async function POST(request: Request) {
 
     if (error?.code === "EAUTH") {
       message =
-        "Gmail authentication failed. Check the email address and Gmail App Password.";
+        "Gmail authentication failed. Check your email address and Gmail App Password.";
     } else if (error?.code === "ECONNECTION") {
       message = "Could not connect to Gmail SMTP.";
+    } else if (error?.code === "EMESSAGE") {
+      message = "Gmail rejected the email or attachment.";
     } else if (error?.message) {
       message = error.message;
     }
@@ -128,9 +212,11 @@ function convertTextToHtml(text: string): string {
 <head>
 <meta charset="UTF-8">
 </head>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #222;">
+
+<body style="font-family: Arial, Helvetica, sans-serif; line-height: 1.6; color: #222;">
 ${html}
 </body>
+
 </html>
 `;
 }

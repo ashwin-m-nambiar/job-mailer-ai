@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export default function Home() {
   const [senderEmail, setSenderEmail] = useState("");
@@ -12,6 +12,9 @@ export default function Home() {
 
   const [subject, setSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
+
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null); 
 
   const [generating, setGenerating] = useState(false);
   const [sending, setSending] = useState(false);
@@ -67,18 +70,37 @@ export default function Home() {
         throw new Error("Enter at least one recipient.");
       }
 
+      if (!senderEmail.trim()) {
+        throw new Error("Enter your sender email.");
+      }
+
+      if (!senderPassword.trim()) {
+        throw new Error("Enter your Gmail App Password.");
+      }
+
+      if (!subject.trim()) {
+        throw new Error("Enter an email subject.");
+      }
+
+      if (!emailBody.trim()) {
+        throw new Error("Enter an email body.");
+      }
+
+      const formData = new FormData();
+
+      formData.append("senderEmail", senderEmail);
+      formData.append("senderPassword", senderPassword);
+      formData.append("recipients", recipients.join(","));
+      formData.append("subject", subject);
+      formData.append("emailBody", emailBody);
+
+      if (attachment) {
+        formData.append("attachment", attachment);
+      }
+
       const response = await fetch("/api/send", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          senderEmail,
-          senderPassword,
-          recipients,
-          subject,
-          emailBody,
-        }),
+        body: formData,
       });
 
       const data = await response.json();
@@ -87,7 +109,11 @@ export default function Home() {
         throw new Error(data.error || "Failed to send email.");
       }
 
-      setMessage("Email sent successfully.");
+      setMessage(
+        data.attachment
+          ? `Email sent successfully with ${data.attachment} attached.`
+          : "Email sent successfully."
+      );
     } catch (err: any) {
       setError(err.message || "Something went wrong.");
     } finally {
@@ -250,6 +276,80 @@ export default function Home() {
                 className="w-full resize-y rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm leading-7 outline-none transition focus:border-zinc-400"
               />
             </div>
+          </section>
+
+          {/* CV Attachment */}
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+            <div className="mb-5">
+              <h2 className="text-lg font-medium">CV Attachment</h2>
+
+              <p className="mt-1 text-sm text-zinc-500">
+                Attach the resume/CV you want to send with this application.
+              </p>
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+
+                if (!file) return;
+
+                if (file.size > 4 * 1024 * 1024) {
+                  setError("CV must be smaller than 4 MB.");
+                  setAttachment(null);
+                  return;
+                }
+
+                setError("");
+                setAttachment(file);
+              }}
+            />
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full rounded-xl border border-dashed border-zinc-700 bg-zinc-950 px-5 py-8 text-center transition hover:border-zinc-500"
+            >
+              <div className="text-sm font-medium">
+                {attachment ? attachment.name : "Choose CV"}
+              </div>
+
+              <div className="mt-2 text-xs text-zinc-500">
+                PDF, DOC or DOCX • Maximum 4 MB
+              </div>
+            </button>
+
+            {attachment && (
+              <div className="mt-4 flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm">
+                    {attachment.name}
+                  </p>
+
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {(attachment.size / 1024 / 1024).toFixed(2)} MB
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAttachment(null);
+
+                    if (fileInputRef.current) {
+                      fileInputRef.current.value = "";
+                    }
+                  }}
+                  className="ml-4 text-sm text-red-400 hover:text-red-300"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
           </section>
 
           {/* Send */}
